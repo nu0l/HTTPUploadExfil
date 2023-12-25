@@ -1,8 +1,10 @@
 package main
 
 import (
+	"flag"
 	"fmt"
 	"io/ioutil"
+	"log"
 	"net/http"
 	"os"
 	"path"
@@ -10,9 +12,10 @@ import (
 	"time"
 )
 
-var storageFolder string = ""
-var addr string = ":8080"
-var form string = `<!DOCTYPE html>
+var storageFolder string
+var addr string
+var token string
+var form = `<!DOCTYPE html>
 <html lang="en">
    <head>
       <meta charset="UTF-8" />
@@ -27,22 +30,44 @@ var form string = `<!DOCTYPE html>
    </body>
 </html>`
 
+func isValidToken(req *http.Request) bool {
+	reqToken := req.Header.Get("token")
+	return reqToken == token
+}
+
+func isValidTokenMiddleware(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if !isValidToken(r) {
+			http.Error(w, "Invalid token", http.StatusUnauthorized)
+			return
+		}
+		next.ServeHTTP(w, r)
+	}
+}
+
 func exfilGet(w http.ResponseWriter, req *http.Request) {
-	// We could also check for req.Header.Get("X-REAL-IP") or "X-FORWARDED-FOR" (better with proxies)
-	host := strings.Split(req.RemoteAddr, ":")
-
-	var filename string = fmt.Sprintf("%s_%s.txt", host[0], time.Now().Format("2006-01-02_15-04-05"))
-	var filePath = path.Join(storageFolder, filename)
-
-	out, err := os.Create(filePath)
-
-	if err != nil {
-		fmt.Println(err)
-	} else {
-		req.Write(out)
-		fmt.Printf("[*] Request Stored (%s)\n", filename)
+	if !isValidToken(req) {
+		http.Error(w, "Invalid token", http.StatusUnauthorized)
+		return
 	}
 
+	host := strings.Split(req.RemoteAddr, ":")
+	filename := fmt.Sprintf("%s_%s.txt", host[0], time.Now().Format("2006-01-02_15-04-05"))
+	filePath := path.Join(storageFolder, filename)
+
+	out, err := os.Create(filePath)
+	if err != nil {
+		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+		return
+	}
+	defer out.Close()
+
+	req.Write(out)
+	fmt.Printf("[*] Request Stored (%s)\n", filename)
+
+	// Return filename and other information in the response
+	response := fmt.Sprintf("File uploaded successfully. Filename: %s", filename)
+	w.Write([]byte(response))
 }
 
 func uploadForm(w http.ResponseWriter, req *http.Request) {
@@ -50,7 +75,6 @@ func uploadForm(w http.ResponseWriter, req *http.Request) {
 }
 
 func uploadFile(w http.ResponseWriter, r *http.Request) {
-
 	file, handler, err := r.FormFile("file")
 	if err != nil {
 		fmt.Println(err)
@@ -70,66 +94,52 @@ func uploadFile(w http.ResponseWriter, r *http.Request) {
 }
 
 func setupRoutes() {
-	http.HandleFunc("/", uploadForm)
-	http.HandleFunc("/p", uploadFile)
-	http.HandleFunc("/g", exfilGet)
+	fileHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !isValidToken(r) {
+			http.Error(w, "Invalid token", http.StatusUnauthorized)
+			return
+		}
+		http.FileServer(http.Dir(storageFolder)).ServeHTTP(w, r)
+	})
 
-	// Directory Listing
-	http.Handle("/l/", http.StripPrefix("/l", http.FileServer(http.Dir(storageFolder))))
+	http.HandleFunc("/", isValidTokenMiddleware(uploadForm))
+	http.HandleFunc("/p", isValidTokenMiddleware(uploadFile))
+	http.HandleFunc("/g", isValidTokenMiddleware(exfilGet))
 
-	//HTTP or HTTPs
-	if _, err := os.Stat("HTTPUploadExfil.csr"); err == nil {
-		http.ListenAndServeTLS(addr, "HTTPUploadExfil.csr", "HTTPUploadExfil.key", nil)
+	http.Handle("/l/", http.StripPrefix("/l", isValidTokenMiddleware(fileHandler)))
+
+	if _, err := os.Stat("httpuploadGO.csr"); err == nil {
+		log.Fatal(http.ListenAndServeTLS(addr, "httpuploadGO.csr", "httpuploadGO.key", nil))
 	} else {
-		http.ListenAndServe(addr, nil)
+		log.Fatal(http.ListenAndServe(addr, nil))
 	}
 }
 
-func ascii_art() {
+func parseFlags() {
+	flag.StringVar(&addr, "port", "58080", "Specify the listening port")
+	flag.StringVar(&storageFolder, "path", ".", "Specify the storage path")
+	flag.StringVar(&token, "token", "", "Specify the header token value")
+	flag.Parse()
 
-	var ascii string = `
-    _____ _____ _____ _____ _____     _           _ _____     ___ _ _ 
-   |  |  |_   _|_   _|  _  |  |  |___| |___ ___ _| |   __|_ _|  _|_| |
-   |     | | |   | | |   __|  |  | . | | . | .'| . |   __|_'_|  _| | |
-   |__|__| |_|   |_| |__|  |_____|  _|_|___|__,|___|_____|_,_|_| |_|_|
-                                 |_|                                  
-   `
-
-	fmt.Print(ascii)
-	fmt.Printf("\n")
-	fmt.Println("Version: 2021-11-13")
-	fmt.Println("Usage: ./httpuploadexfil :8080 /home/kali/exfil")
-	fmt.Printf("\n")
+	if !strings.HasPrefix(addr, ":") {
+		addr = ":" + addr
+	}
 }
 
 func main() {
+	parseFlags()
 
-	ascii_art()
+	fmt.Printf("[+] Server Running...\n")
+	fmt.Printf("[+] Settings: Addr '%s'; Folder '%s'; Token '%s'\n", addr, storageFolder, token)
+	fmt.Printf("[+] Instructions: '/' directory quick upload, '/p' directory to manually build and upload files, '/l' directory gets the current folder contents")
 
-	if len(os.Args) <= 2 {
-		storageFolder, err := os.Getwd()
+	if _, err := os.Stat(storageFolder); os.IsNotExist(err) {
+		err := os.Mkdir(storageFolder, 0755)
 		if err != nil {
 			fmt.Println(err)
 			os.Exit(0)
 		}
-
-		fmt.Println("[+] Server Running")
-		fmt.Printf("[+] Default Settings: Addr '%s'; Folder '%s'\n", addr, storageFolder)
-	} else {
-		addr = os.Args[1]
-		storageFolder = os.Args[2]
-
-		if _, err := os.Stat(storageFolder); os.IsNotExist(err) {
-			err := os.Mkdir(storageFolder, 0755)
-			if err != nil {
-				fmt.Println(err)
-				os.Exit(0)
-			}
-		}
-
-		fmt.Println("[+] Server Running")
-		fmt.Printf("[+] Settings: Addr '%s'; Folder '%s'\n", addr, storageFolder)
 	}
-
+	//fmt.Println("Before setupRoutes")
 	setupRoutes()
 }
