@@ -67,13 +67,18 @@ func handleUploadFile(w http.ResponseWriter, r *http.Request) {
 	}
 
 	dstPath := path.Join(uploadDir, handler.Filename)
-	data, err := io.ReadAll(file)
+
+	// 创建目标文件
+	dstFile, err := os.Create(dstPath)
 	if err != nil {
-		http.Error(w, "Error reading file", http.StatusInternalServerError)
+		http.Error(w, "Error creating destination file", http.StatusInternalServerError)
 		return
 	}
+	defer dstFile.Close()
 
-	if err := os.WriteFile(dstPath, data, 0644); err != nil {
+	// 复制文件内容（代替 io.ReadAll + os.WriteFile）
+	_, err = io.Copy(dstFile, file)
+	if err != nil {
 		http.Error(w, "Error saving file", http.StatusInternalServerError)
 		return
 	}
