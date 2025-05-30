@@ -3,7 +3,7 @@ package main
 import (
 	"flag"
 	"fmt"
-	"io/ioutil"
+	"io"
 	"log"
 	"net/http"
 	"os"
@@ -12,134 +12,139 @@ import (
 	"time"
 )
 
-var storageFolder string
-var addr string
-var token string
-var form = `<!DOCTYPE html>
+var (
+	addr          string
+	storageFolder string
+	token         string
+)
+
+const uploadFormHTML = `<!DOCTYPE html>
 <html lang="en">
-   <head>
-      <meta charset="UTF-8" />
-      <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-      <meta http-equiv="X-UA-Compatible" content="ie=edge" />
-   </head>
-   <body>
-      <form enctype="multipart/form-data" action="/p" method="post">
-         <input type="file" name="file" />
-         <input type="submit" value="Upload" />
-      </form>
-   </body>
+<head><meta charset="UTF-8"><title>Upload</title></head>
+<body>
+  <form enctype="multipart/form-data" action="/upload" method="post">
+    <input type="file" name="file" />
+    <input type="submit" value="Upload" />
+  </form>
+</body>
 </html>`
 
-func isValidToken(req *http.Request) bool {
-	reqToken := req.Header.Get("token")
-	return reqToken == token
-}
-
-func isValidTokenMiddleware(next http.HandlerFunc) http.HandlerFunc {
+// --- Middleware ---
+func withTokenValidation(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if !isValidToken(r) {
-			http.Error(w, "Invalid token", http.StatusUnauthorized)
+		if r.Header.Get("token") != token {
+			http.Error(w, "Unauthorized: invalid token", http.StatusUnauthorized)
 			return
 		}
-		next.ServeHTTP(w, r)
+		next(w, r)
 	}
 }
 
-func exfilGet(w http.ResponseWriter, req *http.Request) {
-	if !isValidToken(req) {
-		http.Error(w, "Invalid token", http.StatusUnauthorized)
-		return
-	}
-
-	host := strings.Split(req.RemoteAddr, ":")
-	filename := fmt.Sprintf("%s_%s.txt", host[0], time.Now().Format("2006-01-02_15-04-05"))
-	filePath := path.Join(storageFolder, filename)
-
-	out, err := os.Create(filePath)
-	if err != nil {
-		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
-		return
-	}
-	defer out.Close()
-
-	req.Write(out)
-	fmt.Printf("[*] Request Stored (%s)\n", filename)
-
-	// Return filename and other information in the response
-	response := fmt.Sprintf("File uploaded successfully. Filename: %s", filename)
-	w.Write([]byte(response))
+// --- Handlers ---
+func handleUploadForm(w http.ResponseWriter, r *http.Request) {
+	logRequest(r)
+	w.Write([]byte(uploadFormHTML))
 }
 
-func uploadForm(w http.ResponseWriter, req *http.Request) {
-	fmt.Fprint(w, form)
-}
+func handleUploadFile(w http.ResponseWriter, r *http.Request) {
+	logRequest(r)
 
-func uploadFile(w http.ResponseWriter, r *http.Request) {
 	file, handler, err := r.FormFile("file")
 	if err != nil {
-		fmt.Println(err)
+		http.Error(w, "No file uploaded", http.StatusBadRequest)
 		return
 	}
 	defer file.Close()
 
-	fileBytes, err := ioutil.ReadAll(file)
+	// 获取当前日期子目录
+	today := time.Now().Format("2006-01-02")
+	uploadDir := path.Join(storageFolder, today)
+
+	// 确保目录存在
+	if err := os.MkdirAll(uploadDir, 0755); err != nil {
+		http.Error(w, "Error creating upload directory", http.StatusInternalServerError)
+		return
+	}
+
+	dstPath := path.Join(uploadDir, handler.Filename)
+	data, err := io.ReadAll(file)
 	if err != nil {
-		fmt.Println(err)
+		http.Error(w, "Error reading file", http.StatusInternalServerError)
+		return
 	}
 
-	ioutil.WriteFile(path.Join(storageFolder, handler.Filename), fileBytes, 0644)
+	if err := os.WriteFile(dstPath, data, 0644); err != nil {
+		http.Error(w, "Error saving file", http.StatusInternalServerError)
+		return
+	}
 
-	fmt.Fprintf(w, "Done\n")
-	fmt.Printf("[*] File Uploaded (%s)\n", handler.Filename)
+	log.Printf("[UPLOAD] File saved to: %s\n", dstPath)
+	fmt.Fprintf(w, "File uploaded to: %s\n", dstPath)
 }
 
+func handleLogRequest(w http.ResponseWriter, r *http.Request) {
+	logRequest(r)
+
+	clientIP := strings.Split(r.RemoteAddr, ":")[0]
+	filename := fmt.Sprintf("%s_%s.txt", clientIP, time.Now().Format("20060102_150405"))
+	filePath := path.Join(storageFolder, filename)
+
+	f, err := os.Create(filePath)
+	if err != nil {
+		http.Error(w, "Error saving request log", http.StatusInternalServerError)
+		return
+	}
+	defer f.Close()
+
+	r.Write(f)
+	log.Printf("[LOG] Full request saved: %s\n", filename)
+	w.Write([]byte(fmt.Sprintf("Request saved as: %s\n", filename)))
+}
+
+func handleFileServer(w http.ResponseWriter, r *http.Request) {
+	logRequest(r)
+	http.FileServer(http.Dir(storageFolder)).ServeHTTP(w, r)
+}
+
+// --- Routing ---
 func setupRoutes() {
-	fileHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !isValidToken(r) {
-			http.Error(w, "Invalid token", http.StatusUnauthorized)
-			return
-		}
-		http.FileServer(http.Dir(storageFolder)).ServeHTTP(w, r)
-	})
-
-	http.HandleFunc("/", isValidTokenMiddleware(uploadForm))
-	http.HandleFunc("/p", isValidTokenMiddleware(uploadFile))
-	http.HandleFunc("/g", isValidTokenMiddleware(exfilGet))
-
-	http.Handle("/l/", http.StripPrefix("/l", isValidTokenMiddleware(fileHandler)))
-
-	if _, err := os.Stat("httpuploadGO.csr"); err == nil {
-		log.Fatal(http.ListenAndServeTLS(addr, "httpuploadGO.csr", "httpuploadGO.key", nil))
-	} else {
-		log.Fatal(http.ListenAndServe(addr, nil))
-	}
+	http.HandleFunc("/upload-form", withTokenValidation(handleUploadForm))
+	http.HandleFunc("/upload", withTokenValidation(handleUploadFile))
+	http.HandleFunc("/log-request", withTokenValidation(handleLogRequest))
+	http.Handle("/files/", http.StripPrefix("/files", withTokenValidation(handleFileServer)))
 }
 
+// --- CLI 参数解析 ---
 func parseFlags() {
-	flag.StringVar(&addr, "port", "58080", "Specify the listening port")
-	flag.StringVar(&storageFolder, "path", ".", "Specify the storage path")
-	flag.StringVar(&token, "token", "", "Specify the header token value")
+	flag.StringVar(&addr, "listen", ":8080", "Listening address (e.g., :8080)")
+	flag.StringVar(&storageFolder, "storage", "./data", "Folder to store uploaded files")
+	flag.StringVar(&token, "token", "", "Access token (required)")
 	flag.Parse()
 
-	if !strings.HasPrefix(addr, ":") {
-		addr = ":" + addr
+	if token == "" {
+		log.Fatal("Token is required. Use -token=<value>")
 	}
 }
 
+// --- 实用工具函数 ---
+func logRequest(r *http.Request) {
+	log.Printf("[REQ] %s %s from %s", r.Method, r.URL.Path, r.RemoteAddr)
+}
+
+// --- 主程序入口 ---
 func main() {
 	parseFlags()
 
-	fmt.Printf("[+] Server Running...\n")
-	fmt.Printf("[+] Settings: Addr '%s'; Folder '%s'; Token '%s'\n", addr, storageFolder, token)
-	fmt.Printf("[+] Instructions: '/' directory quick upload, '/p' directory to manually build and upload files, '/l' directory gets the current folder contents")
-
 	if _, err := os.Stat(storageFolder); os.IsNotExist(err) {
-		err := os.Mkdir(storageFolder, 0755)
-		if err != nil {
-			fmt.Println(err)
-			os.Exit(0)
+		if err := os.MkdirAll(storageFolder, 0755); err != nil {
+			log.Fatalf("Failed to create storage folder: %v", err)
 		}
 	}
-	//fmt.Println("Before setupRoutes")
+
 	setupRoutes()
+
+	log.Printf("Server started at %s", addr)
+	log.Printf("Upload directory: %s", storageFolder)
+	log.Printf("Token: %s", token)
+	log.Fatal(http.ListenAndServe(addr, nil))
 }
