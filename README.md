@@ -10,25 +10,27 @@
 
 
 ## 使用
-直接运行, 端口号默认为58080, 路径目录默认为当前目录, token默认为空
+直接运行, 端口号默认为58080, 路径目录默认为./data, token默认为空
 
-go run main.go -h
-```bash
-Usage of ./httpuploadexfil:
-  -path string
-    	Specify the storage path (default ".")
-  -port string
-    	Specify the listening port (default "58080")
-  -token string
-    	Specify the header token value
-```
+### 接口说明文档
+| 接口路径     | 请求方法 | 描述                           | 请求参数                                 |
+| ------------ | -------- | ------------------------------ | ---------------------------------------- |
+| /upload-form | GET      | 返回上传文件的HTML表单页面     | 无                                       |
+| /upload      | POST     | 上传文件                       | 表单字段 file，包含上传文件内容          |
+| /log-request | GET      | 保存当前请求完整信息到日志文件 | 无                                       |
+| /files/*     | GET      | 访问存储目录下的文件           | 路径参数，访问 /files/xxx 映射到存储目录 |
 
-以参数启动, 指定端口号18080, 启动路径/Volumes/, 启用token认证
-go run main.go -port=18080 -path=/Volumes/ -token=your_token
-```bash
-[+] Server Running...
-[+] Settings: Addr ':18080'; Folder '/Volumes/'; Token 'your_token'
-[+] Instructions: '/' directory quick upload, '/p' directory to manually build and upload files, '/l' directory gets the current folder contents
-```
-token鉴权:
-<img width="995" alt="image" src="https://github.com/nu0l/HTTPUploadExfil/assets/54735907/e88dfa34-9828-45f0-8151-0012a3cf93cc">
+
+#### Token使用说明
+
+如果启动时带了 -token=xxx 参数，所有接口都会校验请求头中 token 字段是否匹配，否则拒绝访问。
+
+如果未设置token，则接口不做权限验证，所有请求均可访问。
+
+#### 上传文件说明
+
+上传的文件会根据当前日期自动分类存放到存储目录的子目录中，目录格式为 YYYY-MM-DD。
+
+#### 日志保存说明
+
+/log-request接口将客户端请求按时间和IP保存成文本文件，便于后续审计。
