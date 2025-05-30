@@ -121,7 +121,7 @@ func setupRoutes() {
 
 // --- CLI 参数解析 ---
 func parseFlags() {
-	flag.StringVar(&addr, "listen", ":8080", "Listening address (e.g., :8080)")
+	flag.StringVar(&addr, "listen", ":58080", "Listening address (e.g., :8080)")
 	flag.StringVar(&storageFolder, "storage", "./data", "Folder to store uploaded files")
 	flag.StringVar(&token, "token", "", "Access token (required)")
 	flag.Parse()
