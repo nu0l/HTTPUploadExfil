@@ -32,7 +32,8 @@ const uploadFormHTML = `<!DOCTYPE html>
 // --- Middleware ---
 func withTokenValidation(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if r.Header.Get("token") != token {
+		// 只有当token不为空时才做验证
+		if token != "" && r.Header.Get("token") != token {
 			http.Error(w, "Unauthorized: invalid token", http.StatusUnauthorized)
 			return
 		}
@@ -56,11 +57,9 @@ func handleUploadFile(w http.ResponseWriter, r *http.Request) {
 	}
 	defer file.Close()
 
-	// 获取当前日期子目录
 	today := time.Now().Format("2006-01-02")
 	uploadDir := path.Join(storageFolder, today)
 
-	// 确保目录存在
 	if err := os.MkdirAll(uploadDir, 0755); err != nil {
 		http.Error(w, "Error creating upload directory", http.StatusInternalServerError)
 		return
@@ -68,7 +67,6 @@ func handleUploadFile(w http.ResponseWriter, r *http.Request) {
 
 	dstPath := path.Join(uploadDir, handler.Filename)
 
-	// 创建目标文件
 	dstFile, err := os.Create(dstPath)
 	if err != nil {
 		http.Error(w, "Error creating destination file", http.StatusInternalServerError)
@@ -76,7 +74,6 @@ func handleUploadFile(w http.ResponseWriter, r *http.Request) {
 	}
 	defer dstFile.Close()
 
-	// 复制文件内容（代替 io.ReadAll + os.WriteFile）
 	_, err = io.Copy(dstFile, file)
 	if err != nil {
 		http.Error(w, "Error saving file", http.StatusInternalServerError)
@@ -123,12 +120,8 @@ func setupRoutes() {
 func parseFlags() {
 	flag.StringVar(&addr, "listen", ":58080", "Listening address (e.g., :58080)")
 	flag.StringVar(&storageFolder, "storage", "./data", "Folder to store uploaded files")
-	flag.StringVar(&token, "token", "", "Access token (required)")
+	flag.StringVar(&token, "token", "", "Access token (optional; if empty, no token check)")
 	flag.Parse()
-
-	if token == "" {
-		log.Fatal("Token is required. Use -token=<value>")
-	}
 }
 
 // --- 实用工具函数 ---
@@ -150,6 +143,10 @@ func main() {
 
 	log.Printf("Server started at %s", addr)
 	log.Printf("Upload directory: %s", storageFolder)
-	log.Printf("Token: %s", token)
+	if token != "" {
+		log.Printf("Token is enabled")
+	} else {
+		log.Printf("Token is disabled (no validation)")
+	}
 	log.Fatal(http.ListenAndServe(addr, nil))
 }
