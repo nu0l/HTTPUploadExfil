@@ -10,7 +10,7 @@
 
 
 ## 使用
-直接运行,端口号默认为58080,路径目录为当前目录,token为空
+直接运行, 端口号默认为58080, 路径目录默认为当前目录, token默认为空
 
 go run main.go -h
 ```bash
@@ -23,7 +23,7 @@ Usage of ./httpuploadexfil:
     	Specify the header token value
 ```
 
-以参数启动
+以参数启动, 指定端口号18080, 启动路径/Volumes/, 启用token认证
 go run main.go -port=18080 -path=/Volumes/ -token=your_token
 ```bash
 [+] Server Running...
