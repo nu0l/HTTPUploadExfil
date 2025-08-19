@@ -12,6 +12,17 @@
 ## 使用
 直接运行, 端口号默认为58080, 路径目录默认为./data, token默认为空
 
+```
+httpuploadexfil.exe -h
+Usage of httpuploadexfil.exe:
+  -listen string
+        Listening address (e.g., :58080) (default ":58080")
+  -storage string
+        Folder to store uploaded files (default "./data")
+  -token string
+        Access token (optional; if empty, no token check)
+```
+
 ### 接口说明文档
 | 接口路径     | 请求方法 | 描述                           | 请求参数                                 |
 | ------------ | -------- | ------------------------------ | ---------------------------------------- |
@@ -34,3 +45,4 @@
 #### 日志保存说明
 
 /log-request接口将客户端请求按时间和IP保存成文本文件，便于后续审计。
+
