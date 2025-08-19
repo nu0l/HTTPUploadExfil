@@ -35,6 +35,9 @@ Usage of httpuploadexfil.exe:
 #### Token使用说明
 
 如果启动时带了 -token=xxx 参数，所有接口都会校验请求头中 token 字段是否匹配，否则拒绝访问。
+```
+token: xxx
+```
 
 如果未设置token，则接口不做权限验证，所有请求均可访问。
 
@@ -45,4 +48,5 @@ Usage of httpuploadexfil.exe:
 #### 日志保存说明
 
 /log-request接口将客户端请求按时间和IP保存成文本文件，便于后续审计。
+
 
